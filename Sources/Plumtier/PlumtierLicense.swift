@@ -58,10 +58,10 @@ public final class PlumtierLicense
     /// What this Mac is called in the buyer's list of devices.
     public let instanceName: String
 
-    public private(set) var status: LicenseStatus = .unlicensed
+    public internal(set) var status: LicenseStatus = .unlicensed
 
     /// The free trial, when the app offers one. `.notOffered` otherwise.
-    public private(set) var trialStatus: TrialStatus = .notOffered
+    public internal(set) var trialStatus: TrialStatus = .notOffered
 
     /// True when the app should unlock its paid features: licensed, or in the free trial.
     public var isUnlocked: Bool
@@ -284,7 +284,11 @@ public final class PlumtierLicense
     /// countdown without asking the store, for example when a window opens.
     public func checkTrial()
     {
-        trialStatus = trialKeeper?.check(now: now()) ?? .notOffered
+        guard let trialKeeper else
+        {
+            return
+        }
+        trialStatus = trialKeeper.check(now: now())
     }
 
     // MARK: Storage
