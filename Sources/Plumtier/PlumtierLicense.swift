@@ -60,6 +60,15 @@ public final class PlumtierLicense
 
     public private(set) var status: LicenseStatus = .unlicensed
 
+    /// The free trial, when the app offers one. `.notOffered` otherwise.
+    public private(set) var trialStatus: TrialStatus = .notOffered
+
+    /// True when the app should unlock its paid features: licensed, or in the free trial.
+    public var isUnlocked: Bool
+    {
+        isLicensed || trialStatus.isActive
+    }
+
     /// True when the store confirmed the license on this Mac.
     public var isLicensed: Bool
     {
@@ -86,20 +95,31 @@ public final class PlumtierLicense
 
     let client: PlumtierClient
     let keychain: any DataStore
+    let trialKeeper: TrialKeeper?
+    let now: @Sendable () -> Date
     private var checkTask: Task<Void, Never>?
 
     /// - Parameters:
     ///   - store: the store's address, for example `https://store.example.com`.
     ///   - product: the product's link (slug). Keys for other products are refused.
     ///   - displayName: the name shown in the license window. Defaults to the app's name.
-    public convenience init(store: URL, product: String, displayName: String? = nil)
+    ///   - trial: a free trial to offer from the first launch, for example `.days(14)`. `nil`
+    ///     (the default) offers no trial.
+    public convenience init(store: URL, product: String, displayName: String? = nil, trial: Trial? = nil)
     {
         let service = "plumtier.\(store.host() ?? store.absoluteString).\(product)"
-        self.init(store: store, product: product, displayName: displayName, client: PlumtierClient(store: store), keychain: KeychainStore(service: service), checkNow: true)
+        let keeper = trial.map
+        { trial in
+            let name = TrialKeeper.recordName(service: service)
+            return TrialKeeper(trial: trial, stores: TrialKeeper.defaultStores(service: service, name: name), name: name, key: TrialKeeper.signingKey(service: service, machine: TrialKeeper.machineID))
+        }
+        self.init(store: store, product: product, displayName: displayName, client: PlumtierClient(store: store), keychain: KeychainStore(service: service), trial: keeper, checkNow: true)
     }
 
-    init(store: URL, product: String, displayName: String?, client: PlumtierClient, keychain: any DataStore, instanceName: String? = nil, checkNow: Bool)
+    init(store: URL, product: String, displayName: String?, client: PlumtierClient, keychain: any DataStore, trial: TrialKeeper? = nil, instanceName: String? = nil, now: @escaping @Sendable () -> Date = { Date() }, checkNow: Bool)
     {
+        self.trialKeeper = trial
+        self.now = now
         self.store = store
         self.product = product
         self.displayName = displayName ?? Self.appName
@@ -110,6 +130,7 @@ public final class PlumtierLicense
         {
             status = .checking
         }
+        checkTrial()
         if checkNow
         {
             checkTask = Task { await refresh() }
@@ -122,6 +143,7 @@ public final class PlumtierLicense
     /// you want a fresh answer.
     public func refresh() async
     {
+        checkTrial()
         guard let saved else
         {
             status = .unlicensed
@@ -256,6 +278,13 @@ public final class PlumtierLicense
     public func openPortal()
     {
         NSWorkspace.shared.open(portalURL)
+    }
+
+    /// Updates `trialStatus`. `refresh()` does this too; call it when you want an up to date
+    /// countdown without asking the store, for example when a window opens.
+    public func checkTrial()
+    {
+        trialStatus = trialKeeper?.check(now: now()) ?? .notOffered
     }
 
     // MARK: Storage
